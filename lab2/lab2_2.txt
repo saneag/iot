@@ -1,0 +1,214 @@
+#include <Arduino.h>
+#include <Arduino_FreeRTOS.h>
+#include <stdio.h>
+#include <semphr.h>
+
+#define RED 13
+#define GREEN 12
+
+#define BUTTON_LED 2
+#define BUTTON_DECR 3
+#define BUTTON_INCR 4
+
+struct Button
+{
+  int state;
+  int lastState;
+  int reading;
+  unsigned long lastDebounceTime;
+} ButtonDefault = {HIGH, LOW, 0, 50};
+
+struct Button buttonLed = ButtonDefault;
+struct Button buttonDecrement = ButtonDefault;
+struct Button buttonIncrement = ButtonDefault;
+
+int greenLedBlinkInterval = 1000; 
+unsigned long previousBlinkTime = 0;
+
+int redLedState = HIGH;
+int greenLedState = LOW; 
+
+unsigned long debounceDelay = 50;
+
+SemaphoreHandle_t xSerialSemaphore;
+
+void setup()
+{
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  pinMode(BUTTON_LED, INPUT);
+  pinMode(BUTTON_DECR, INPUT);
+  pinMode(BUTTON_INCR, INPUT);
+
+  Serial.begin(9600);
+
+  if ( xSerialSemaphore == NULL )  // Check to confirm that the Serial Semaphore has not already been created.
+  {
+    xSerialSemaphore = xSemaphoreCreateMutex();  // Create a mutex semaphore we will use to manage the Serial Port
+    if ( ( xSerialSemaphore ) != NULL )
+      xSemaphoreGive( ( xSerialSemaphore ) );  // Make the Serial Port available for use, by "Giving" the Semaphore.
+  }
+
+  xTaskCreate(RedButtonBehavior, "ChangeLED", 128, NULL, 2, NULL);
+  xTaskCreate(GreenLedBehavior, "LedBlink", 128, NULL, 1, NULL);
+  xTaskCreate(PrintInfo, "InfoSystem", 128, NULL, 4, NULL);
+  vTaskStartScheduler();
+}
+
+void loop()
+{
+
+}
+
+void RedButtonBehavior()
+{
+  while(true)
+  {
+    buttonLed.reading = digitalRead(BUTTON_LED);
+  
+    // If the switch changed, due to noise or pressing:
+    if (buttonLed.reading != buttonLed.lastState) {
+      // reset the debouncing timer
+      buttonLed.lastDebounceTime = millis();
+    }
+
+    if ((millis() - buttonLed.lastDebounceTime) > debounceDelay) {
+      // daca starea butonului a fost schimbata
+      if (buttonLed.reading != buttonLed.state) {
+        buttonLed.state = buttonLed.reading;
+
+        // only toggle the LED if the new button state is HIGH
+        if (buttonLed.state == HIGH) {
+          redLedState = !redLedState;
+        }
+      }
+    }
+    digitalWrite(RED, redLedState);
+    buttonLed.lastState = buttonLed.reading;
+
+    if (RED == HIGH)
+    {
+      if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) == pdTRUE );
+    }
+    else xSemaphoreGive( xSerialSemaphore ); 
+      
+    vTaskDelay(1);
+  }
+}
+
+void GreenLedBehavior()
+{
+  while(true)
+  {
+    if ( xSemaphoreTake( xSerialSemaphore, ( TickType_t ) 5 ) != pdTRUE )
+      continue;
+    
+    if (redLedState == LOW) {
+      if (millis() - previousBlinkTime >= greenLedBlinkInterval) {
+        previousBlinkTime = millis();
+      
+        if (greenLedState == LOW) {
+          digitalWrite(GREEN, HIGH);
+          greenLedState = HIGH;
+        } else { 
+          digitalWrite(GREEN, LOW);
+          greenLedState = LOW;
+        }
+      } 
+    } else {
+      digitalWrite(GREEN, LOW);
+    }
+
+    ButtonsBehavior(&buttonIncrement, true, BUTTON_INCR);
+    ButtonsBehavior(&buttonDecrement, false, BUTTON_DECR);
+
+    xSemaphoreGive( xSerialSemaphore );
+
+    vTaskDelay(1);
+  }
+}
+
+
+void ButtonsBehavior(struct Button *button, bool btnType, int pin)
+{
+  button->reading = digitalRead(pin);
+  
+  if (button->reading != button->lastState) {
+    button->lastDebounceTime = millis();
+  }
+
+  if ((millis() - button->lastDebounceTime) > debounceDelay) {
+    if (button->reading != button->state) {
+      button->state = button->reading;
+
+      if (button->state == HIGH) {
+        if (btnType == true)
+        {
+          greenLedBlinkInterval += 100;
+        } else {
+          if (greenLedBlinkInterval > 100)
+            greenLedBlinkInterval -= 100;
+        }
+      }
+    }
+  }
+
+  button->lastState = button->reading;
+}
+
+bool previousRedLedState = HIGH;
+bool previousGreenLedState = LOW;
+
+bool previousButtonLedState = LOW;
+bool previousButtonDecrementState = LOW;
+bool previousButtonIncrementState = LOW;
+
+void PrintInfo()
+{
+  while(true)
+  {
+    // implement this functios to print the state of leds
+    if (xSemaphoreTake(xSerialSemaphore, (TickType_t)5) == pdTRUE)
+    {
+      if (redLedState != previousRedLedState)
+      {
+        Serial.print("Red LED State: ");
+        Serial.println(redLedState == HIGH ? "ON" : "OFF");
+        previousRedLedState = redLedState;
+      }
+
+      if (greenLedState != previousGreenLedState)
+      {
+        Serial.print("Green LED State: ");
+        Serial.println(greenLedState == HIGH ? "ON" : "OFF");
+        previousGreenLedState = greenLedState;
+      }
+
+      // Check if the button states have changed
+      if (buttonLed.state != previousButtonLedState)
+      {
+        if(buttonLed.state == HIGH) 
+          Serial.println(" Button LED PRESSED");
+        previousButtonLedState = buttonLed.state;
+      }
+
+      if (buttonDecrement.state != previousButtonDecrementState)
+      {
+        if(buttonDecrement.state == HIGH)
+          Serial.println("Button Decrement PRESSED");
+        previousButtonDecrementState = buttonDecrement.state;
+      }
+
+      if (buttonIncrement.state != previousButtonIncrementState)
+      {
+        if(buttonIncrement.state == HIGH)
+          Serial.println("Button Increment  PRESSED");
+        previousButtonIncrementState = buttonIncrement.state;
+      }
+      
+      xSemaphoreGive(xSerialSemaphore);
+    }
+
+    vTaskDelay( 1000 / portTICK_PERIOD_MS );
+  }
+}

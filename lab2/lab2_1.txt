@@ -1,0 +1,132 @@
+#include <Arduino.h>
+#include <stdio.h>
+
+#define RED 13
+#define GREEN 12
+
+#define BUTTON_LED 2
+#define BUTTON_DECR 3
+#define BUTTON_INCR 4
+
+struct Button
+{
+  int state;
+  int lastState;
+  int reading;
+  unsigned long lastDebounceTime;
+} ButtonDefault = {HIGH, LOW, 0, 50};
+
+struct Button buttonLed = ButtonDefault;
+struct Button buttonDecrement = ButtonDefault;
+struct Button buttonIncrement = ButtonDefault;
+
+int greenLedBlinkInterval = 1000; 
+unsigned long previousBlinkTime = 0;
+
+int redLedState = HIGH;
+int greenLedState = LOW; 
+
+unsigned long debounceDelay = 50;
+
+void setup()
+{
+    pinMode(RED, OUTPUT);
+    pinMode(GREEN, OUTPUT);
+    pinMode(BUTTON_LED, INPUT);
+    pinMode(BUTTON_DECR, INPUT);
+    pinMode(BUTTON_INCR, INPUT);
+
+    Serial.begin(9600);
+}
+
+void loop()
+{
+  RedButtonBehavior();
+  GreenLedBehavior();
+  ButtonsBehavior(&buttonIncrement, true, BUTTON_INCR);
+  ButtonsBehavior(&buttonDecrement, false, BUTTON_DECR);
+  PrintStats();
+}
+
+void RedButtonBehavior()
+{
+  buttonLed.reading = digitalRead(BUTTON_LED);
+  
+  // If the switch changed, due to noise or pressing:
+  if (buttonLed.reading != buttonLed.lastState) {
+    // reset the debouncing timer
+    buttonLed.lastDebounceTime = millis();
+  }
+
+  if ((millis() - buttonLed.lastDebounceTime) > debounceDelay) {
+    // daca starea butonului a fost schimbata
+    if (buttonLed.reading != buttonLed.state) {
+      buttonLed.state = buttonLed.reading;
+
+      // only toggle the LED if the new button state is HIGH
+      if (buttonLed.state == HIGH) {
+        redLedState = !redLedState;
+      }
+    }
+  }
+  digitalWrite(RED, redLedState);
+  buttonLed.lastState = buttonLed.reading;
+}
+
+void GreenLedBehavior()
+{
+  if (redLedState == LOW) {
+    if (millis() - previousBlinkTime >= greenLedBlinkInterval) {
+      previousBlinkTime = millis();
+    
+      if (greenLedState == LOW) {
+        digitalWrite(GREEN, HIGH);
+        greenLedState = HIGH;
+      } else { 
+        digitalWrite(GREEN, LOW);
+        greenLedState = LOW;
+      }
+    } 
+  } else {
+    digitalWrite(GREEN, LOW);
+  }
+}
+
+void ButtonsBehavior(struct Button *button, bool btnType, int pin)
+{
+  button->reading = digitalRead(pin);
+  
+  if (button->reading != button->lastState) {
+    button->lastDebounceTime = millis();
+  }
+
+  if ((millis() - button->lastDebounceTime) > debounceDelay) {
+    if (button->reading != button->state) {
+      button->state = button->reading;
+
+      if (button->state == HIGH) {
+        if (btnType == true)
+        {
+          greenLedBlinkInterval += 100;
+        } else {
+          if (greenLedBlinkInterval > 100)
+            greenLedBlinkInterval -= 100;
+        }
+      }
+    }
+  }
+
+  button->lastState = button->reading;
+}
+
+void PrintStats()
+{
+  if(buttonLed.lastState == LOW && buttonLed.state == HIGH && redLedState == HIGH)
+  {
+    Serial.println("RED led is ON");
+  }
+  if(buttonLed.lastState == HIGH && buttonLed.state == LOW && greenLedState == HIGH)
+  {
+    //Serial.println("Green led is blinking");
+  }
+}
